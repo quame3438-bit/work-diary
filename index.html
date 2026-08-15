@@ -23,7 +23,7 @@ button{border:0;border-radius:11px;font-size:14px;font-weight:700;cursor:pointer
 .add{width:40px;height:40px;border-radius:50%;font-size:27px;line-height:38px;background:#111;color:#fff;padding:0}
 .top{display:flex;gap:8px;align-items:center}
 .top input{flex:1}
-.person{display:grid;grid-template-columns:1.2fr .9fr .9fr auto;gap:8px;margin-top:8px}
+.person{display:grid;grid-template-columns:1fr auto;gap:8px;margin-top:8px}
 .person button{padding:0 12px;background:#eee}
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .stat{background:#fafafa;border:1px solid #ececec;border-radius:12px;padding:10px}
@@ -50,7 +50,7 @@ button{border:0;border-radius:11px;font-size:14px;font-weight:700;cursor:pointer
 .day-detail ul{padding-left:20px;margin:8px 0}
 .actions{display:flex;gap:8px;flex-wrap:wrap}
 .actions button{flex:1;min-width:140px}
-@media(max-width:560px){.person{grid-template-columns:1fr 1fr}.person button{height:42px}.grid{grid-template-columns:1fr}}
+@media(max-width:560px){.person{grid-template-columns:1fr auto}.person button{height:42px}.grid{grid-template-columns:1fr}}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
@@ -87,7 +87,7 @@ button{border:0;border-radius:11px;font-size:14px;font-weight:700;cursor:pointer
     <span>出勤人员统计</span>
     <button class="add" onclick="addPerson()">＋</button>
   </div>
-  <div class="hint">姓名必填；可记录工种/岗位、备注。点击“＋”可继续添加人员。</div>
+  <div class="hint">只填写姓名。保存当天记录后，下一天会自动带入上次的人员名单，避免重复输入。</div>
   <div id="people"></div>
 </div>
 
@@ -136,7 +136,7 @@ button{border:0;border-radius:11px;font-size:14px;font-weight:700;cursor:pointer
 </div>
 
 <script>
-const KD='work_diary_data_v1';
+const KD='work_diary_data_v1', KL='work_diary_last_people_v1';
 let allData=JSON.parse(localStorage.getItem(KD)||'{}');
 let selectedDate='';
 let viewDate=new Date();
@@ -170,19 +170,32 @@ function ensureDraft(){
 }
 function loadDay(k){
   const d=allData[k];
-  window.draft=d?JSON.parse(JSON.stringify(d)):{work:'',people:[],photos:[]};
+  if(d){
+    window.draft=JSON.parse(JSON.stringify(d));
+  }else{
+    let lastPeople=[];
+    try{ lastPeople=JSON.parse(localStorage.getItem(KL)||'[]'); }catch(e){}
+    window.draft={
+      work:'',
+      people:(lastPeople||[]).map((name,idx)=>({
+        id:Date.now()+idx+Math.floor(Math.random()*100000),
+        name:String(name||'')
+      })),
+      photos:[]
+    };
+  }
   editingPhotos=[...(window.draft.photos||[])];
   document.querySelector('#workContent').value=window.draft.work||'';
   renderPeople();
   renderPhotos();
-  document.querySelector('#saveStatus').textContent=d?'已加载当天记录，可继续修改后保存。':'';
+  document.querySelector('#saveStatus').textContent=d?'已加载当天记录，可继续修改后保存。':'已自动带入上次人员名单，可按当天实际出勤增删。';
   viewDate=new Date(k+'T00:00:00');
   renderCalendar();
   renderDayDetail(k);
 }
 function addPerson(){
   ensureDraft();
-  window.draft.people.push({id:Date.now()+Math.floor(Math.random()*1000),name:'',role:'',note:''});
+  window.draft.people.push({id:Date.now()+Math.floor(Math.random()*1000),name:''});
   renderPeople();
 }
 function updatePerson(id,field,value){
@@ -203,8 +216,6 @@ function renderPeople(){
   box.innerHTML=window.draft.people.map(p=>`
     <div class="person">
       <input placeholder="姓名" value="${esc(p.name)}" oninput="updatePerson(${p.id},'name',this.value)">
-      <input placeholder="工种/岗位" value="${esc(p.role)}" oninput="updatePerson(${p.id},'role',this.value)">
-      <input placeholder="备注" value="${esc(p.note)}" oninput="updatePerson(${p.id},'note',this.value)">
       <button onclick="removePerson(${p.id})">删除</button>
     </div>`).join('');
 }
@@ -247,9 +258,10 @@ function saveDay(){
   ensureDraft();
   const work=document.querySelector('#workContent').value.trim();
   const people=window.draft.people
-    .map(p=>({id:p.id,name:(p.name||'').trim(),role:(p.role||'').trim(),note:(p.note||'').trim()}))
+    .map(p=>({id:p.id,name:(p.name||'').trim()}))
     .filter(p=>p.name);
   allData[selectedDate]={work,people,photos:[...editingPhotos],savedAt:new Date().toISOString()};
+  localStorage.setItem(KL,JSON.stringify(people.map(p=>p.name)));
   persist();
   window.draft=JSON.parse(JSON.stringify(allData[selectedDate]));
   document.querySelector('#saveStatus').textContent='已保存到 '+selectedDate;
@@ -268,9 +280,8 @@ function personStats(){
     const seen=new Set();
     (d.people||[]).forEach(p=>{
       const name=(p.name||'').trim(); if(!name)return;
-      if(!map[name])map[name]={days:0,dates:[],roles:new Set()};
+      if(!map[name])map[name]={days:0,dates:[]};
       if(!seen.has(name)){map[name].days++;map[name].dates.push(date);seen.add(name);}
-      if(p.role)map[name].roles.add(p.role);
     });
   });
   return map;
@@ -282,7 +293,7 @@ function renderPersonSummary(){
   if(!names.length){box.innerHTML='<div class="hint">暂无出勤记录。</div>';return;}
   box.innerHTML=names.map(n=>`
     <div class="summary-person">
-      <div><strong>${esc(n)}</strong><div class="hint">${esc([...stats[n].roles].join('、'))}</div></div>
+      <div><strong>${esc(n)}</strong></div>
       <div><strong>${stats[n].days} 天</strong></div>
     </div>`).join('');
 }
@@ -313,7 +324,7 @@ function renderDayDetail(k){
   box.innerHTML=`<h3>${k}</h3>
     <div><strong>工作内容：</strong>${esc(d.work||'未填写')}</div>
     <div style="margin-top:8px"><strong>出勤人员：</strong></div>
-    ${(d.people||[]).length?`<ul>${d.people.map(p=>`<li>${esc(p.name)}${p.role?'（'+esc(p.role)+'）':''}${p.note?' - '+esc(p.note):''}</li>`).join('')}</ul>`:'<div class="hint">无人员记录</div>'}
+    ${(d.people||[]).length?`<ul>${d.people.map(p=>`<li>${esc(p.name)}</li>`).join('')}</ul>`:'<div class="hint">无人员记录</div>'}
     <div class="photo-wrap">${(d.photos||[]).map(p=>`<img class="photo-preview" src="${p}">`).join('')}</div>`;
 }
 function renderAll(){
@@ -380,8 +391,6 @@ async function exportExcel(){
     {header:'日期',key:'date',width:14},
     {header:'工作内容',key:'work',width:36},
     {header:'姓名',key:'name',width:16},
-    {header:'工种/岗位',key:'role',width:18},
-    {header:'备注',key:'note',width:24},
     {header:'当天出勤人数',key:'count',width:16},
     {header:'图片数量',key:'photos',width:12}
   ];
@@ -389,10 +398,10 @@ async function exportExcel(){
   Object.keys(allData).sort().forEach(date=>{
     const d=allData[date],people=d.people||[];
     if(!people.length){
-      ws.addRow({date,work:d.work||'',name:'',role:'',note:'',count:0,photos:(d.photos||[]).length});
+      ws.addRow({date,work:d.work||'',name:'',count:0,photos:(d.photos||[]).length});
     }else{
       people.forEach((p,i)=>ws.addRow({
-        date,work:i===0?(d.work||''):'',name:p.name||'',role:p.role||'',note:p.note||'',
+        date,work:i===0?(d.work||''):'',name:p.name||'',
         count:i===0?people.length:'',photos:i===0?(d.photos||[]).length:''
       }));
     }
@@ -401,13 +410,12 @@ async function exportExcel(){
   sum.columns=[
     {header:'姓名',key:'name',width:18},
     {header:'累计出勤天数',key:'days',width:16},
-    {header:'出勤日期',key:'dates',width:50},
-    {header:'工种/岗位',key:'roles',width:28}
+    {header:'出勤日期',key:'dates',width:50}
   ];
   sum.getRow(1).font={bold:true};
   const stats=personStats();
   Object.keys(stats).sort((a,b)=>a.localeCompare(b,'zh-CN')).forEach(name=>{
-    sum.addRow({name,days:stats[name].days,dates:stats[name].dates.join('、'),roles:[...stats[name].roles].join('、')});
+    sum.addRow({name,days:stats[name].days,dates:stats[name].dates.join('、')});
   });
   const buf=await wb.xlsx.writeBuffer();
   saveAs(new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}),'工作日记_出勤统计.xlsx');
