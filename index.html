@@ -1,0 +1,428 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#111111">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="工作日记">
+<title>工作日记</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#f5f5f7;color:#1d1d1f;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif}
+.wrap{max-width:760px;margin:auto;padding:calc(16px + env(safe-area-inset-top)) 12px calc(90px + env(safe-area-inset-bottom))}
+h1{font-size:28px;margin:8px 0 16px}
+.card{background:#fff;border-radius:18px;padding:16px;margin-bottom:12px;box-shadow:0 2px 12px #0000000d}
+.title{display:flex;justify-content:space-between;align-items:center;font-size:19px;font-weight:800;margin-bottom:10px}
+.label{font-size:13px;color:#777;margin-bottom:6px}
+input,textarea{width:100%;padding:12px;border:1px solid #ddd;border-radius:11px;font-size:15px;background:#fff}
+textarea{min-height:110px;resize:vertical}
+button{border:0;border-radius:11px;font-size:14px;font-weight:700;cursor:pointer}
+.dark{background:#111;color:#fff;padding:12px 14px}
+.light{background:#ececec;color:#222;padding:10px 12px}
+.add{width:40px;height:40px;border-radius:50%;font-size:27px;line-height:38px;background:#111;color:#fff;padding:0}
+.top{display:flex;gap:8px;align-items:center}
+.top input{flex:1}
+.person{display:grid;grid-template-columns:1fr auto;gap:8px;margin-top:8px}
+.person button{padding:0 12px;background:#eee}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.stat{background:#fafafa;border:1px solid #ececec;border-radius:12px;padding:10px}
+.stat strong{display:block;font-size:18px;margin-top:4px}
+.hint{font-size:12px;color:#888;margin-top:7px}
+.calendar-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+.calendar-head button{padding:8px 11px;background:#eee}
+.week,.cal{display:grid;grid-template-columns:repeat(7,1fr);gap:5px}
+.week div{text-align:center;font-size:12px;color:#888;padding:4px}
+.day{aspect-ratio:1/1;border:0;border-radius:10px;background:#f2f2f2;position:relative;font-size:14px}
+.day.has{background:#111;color:#fff}
+.day.today{outline:2px solid #888}
+.day.blank{visibility:hidden}
+.dot{position:absolute;bottom:5px;left:50%;transform:translateX(-50%);width:4px;height:4px;border-radius:50%;background:currentColor}
+.summary-person{display:flex;justify-content:space-between;gap:10px;padding:9px 0;border-bottom:1px dashed #ddd}
+.summary-person:last-child{border-bottom:0}
+.photo-wrap{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px}
+.photo-preview{width:86px;height:86px;object-fit:cover;border-radius:10px;border:1px solid #ddd}
+.photo-btn{display:inline-block;background:#ececec;color:#222;border-radius:10px;padding:9px 11px;font-size:13px;font-weight:700;cursor:pointer}
+.photo-input{display:none}
+.saved-note{font-size:12px;color:#197a35;margin-top:8px}
+.day-detail{margin-top:12px;padding-top:12px;border-top:1px solid #eee}
+.day-detail h3{margin:0 0 8px}
+.work-detail{white-space:pre-wrap;overflow-wrap:anywhere;margin-top:4px}
+.day-detail ul{padding-left:20px;margin:8px 0}
+.actions{display:flex;gap:8px;flex-wrap:wrap}
+.actions button{flex:1;min-width:140px}
+@media(max-width:560px){.person{grid-template-columns:1fr auto}.person button{height:42px}.grid{grid-template-columns:1fr}}
+</style>
+<script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
+</head>
+<body>
+<div class="wrap">
+<h1>工作日记</h1>
+<div class="card">
+  <div class="title"><span>备份与恢复</span></div>
+  <div class="actions">
+    <button class="dark" onclick="exportBackup()">导出备份</button>
+    <button class="light" onclick="document.getElementById('importBackupFile').click()">导入备份</button>
+  </div>
+  <input id="importBackupFile" type="file" accept=".json,application/json" style="display:none" onchange="importBackup(this)">
+  <div class="hint">导出的是完整工作日记备份，包含每天的工作内容、出勤人员和已添加的图片。换设备时可导入恢复。</div>
+</div>
+
+
+<div class="card">
+  <div class="label">日期</div>
+  <div class="top">
+    <input id="recordDate" type="date">
+    <button class="dark" onclick="goToday()">今天</button>
+  </div>
+</div>
+
+<div class="card">
+  <div class="title"><span>工作内容</span></div>
+  <textarea id="workContent" placeholder="填写当天工作内容，例如：现场施工、设备安装、检查、运输等"></textarea>
+</div>
+
+<div class="card">
+  <div class="title">
+    <span>出勤人员统计</span>
+    <button class="add" onclick="addPerson()">＋</button>
+  </div>
+  <div class="hint">只填写姓名。保存当天记录后，下一天会自动带入上次的人员名单，避免重复输入。</div>
+  <div id="people"></div>
+</div>
+
+<div class="card">
+  <div class="title"><span>当天图片</span></div>
+  <label class="photo-btn">＋ 添加图片
+    <input id="photoInput" class="photo-input" type="file" accept="image/*" multiple onchange="addPhotos(this)">
+  </label>
+  <div id="photos" class="photo-wrap"></div>
+</div>
+
+<div class="card">
+  <div class="actions">
+    <button class="dark" onclick="saveDay()">上传到当天日期 / 保存</button>
+    <button class="light" onclick="clearForm()">清空当天编辑</button>
+  </div>
+  <div id="saveStatus" class="saved-note"></div>
+</div>
+
+<div class="card">
+  <div class="title"><span>人员累计汇总</span></div>
+  <div id="personSummary"></div>
+</div>
+
+<div class="card">
+  <div class="title"><span>日历记录</span></div>
+  <div class="calendar-head">
+    <button onclick="changeMonth(-1)">‹</button>
+    <strong id="monthTitle"></strong>
+    <button onclick="changeMonth(1)">›</button>
+  </div>
+  <div class="week">
+    <div>日</div><div>一</div><div>二</div><div>三</div><div>四</div><div>五</div><div>六</div>
+  </div>
+  <div id="calendar" class="cal"></div>
+  <div id="dayDetail" class="day-detail"></div>
+</div>
+
+<div class="card">
+  <div class="title"><span>导出 Excel</span></div>
+  <div class="actions">
+    <button class="dark" onclick="exportExcel()">导出全部记录 Excel</button>
+  </div>
+  <div class="hint">Excel 包含“每日记录”和“人员累计汇总”两个工作表。</div>
+</div>
+</div>
+
+<script>
+const KD='work_diary_data_v1', KL='work_diary_last_people_v1';
+let allData=JSON.parse(localStorage.getItem(KD)||'{}');
+let selectedDate='';
+let viewDate=new Date();
+let editingPhotos=[];
+
+const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+const keyOf=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+const todayKey=keyOf(new Date());
+
+function persist(){localStorage.setItem(KD,JSON.stringify(allData))}
+function init(){
+  selectedDate=todayKey;
+  document.querySelector('#recordDate').value=selectedDate;
+  document.querySelector('#recordDate').addEventListener('change',e=>{
+    if(!e.target.value)return;
+    selectedDate=e.target.value;
+    loadDay(selectedDate);
+  });
+  loadDay(selectedDate);
+  renderAll();
+}
+function goToday(){
+  selectedDate=todayKey;
+  document.querySelector('#recordDate').value=selectedDate;
+  viewDate=new Date();
+  loadDay(selectedDate);
+  renderAll();
+}
+function ensureDraft(){
+  if(!window.draft) window.draft={work:'',people:[],photos:[]};
+}
+function loadDay(k){
+  const d=allData[k];
+  if(d){
+    window.draft=JSON.parse(JSON.stringify(d));
+  }else{
+    let lastPeople=[];
+    try{ lastPeople=JSON.parse(localStorage.getItem(KL)||'[]'); }catch(e){}
+    window.draft={
+      work:'',
+      people:(lastPeople||[]).map((name,idx)=>({
+        id:Date.now()+idx+Math.floor(Math.random()*100000),
+        name:String(name||'')
+      })),
+      photos:[]
+    };
+  }
+  editingPhotos=[...(window.draft.photos||[])];
+  document.querySelector('#workContent').value=window.draft.work||'';
+  renderPeople();
+  renderPhotos();
+  document.querySelector('#saveStatus').textContent=d?'已加载当天记录，可继续修改后保存。':'已自动带入上次人员名单，可按当天实际出勤增删。';
+  viewDate=new Date(k+'T00:00:00');
+  renderCalendar();
+  renderDayDetail(k);
+}
+function addPerson(){
+  ensureDraft();
+  window.draft.people.push({id:Date.now()+Math.floor(Math.random()*1000),name:''});
+  renderPeople();
+}
+function updatePerson(id,field,value){
+  const p=window.draft.people.find(x=>x.id===id); if(!p)return;
+  p[field]=value;
+}
+function removePerson(id){
+  window.draft.people=window.draft.people.filter(x=>x.id!==id);
+  renderPeople();
+}
+function renderPeople(){
+  ensureDraft();
+  const box=document.querySelector('#people');
+  if(!window.draft.people.length){
+    box.innerHTML='<div class="hint">暂无人员，点击右上角“＋”添加。</div>';
+    return;
+  }
+  box.innerHTML=window.draft.people.map(p=>`
+    <div class="person">
+      <input placeholder="姓名" value="${esc(p.name)}" oninput="updatePerson(${p.id},'name',this.value)">
+      <button onclick="removePerson(${p.id})">删除</button>
+    </div>`).join('');
+}
+function addPhotos(input){
+  const files=[...(input.files||[])];
+  if(!files.length)return;
+  let remain=files.length;
+  files.forEach(file=>{
+    if(!file.type.startsWith('image/')){remain--;return;}
+    const reader=new FileReader();
+    reader.onload=()=>{
+      const img=new Image();
+      img.onload=()=>{
+        const max=1400;
+        let w=img.width,h=img.height;
+        if(w>max||h>max){const s=Math.min(max/w,max/h);w=Math.round(w*s);h=Math.round(h*s);}
+        const c=document.createElement('canvas');c.width=w;c.height=h;
+        c.getContext('2d').drawImage(img,0,0,w,h);
+        editingPhotos.push(c.toDataURL('image/jpeg',0.78));
+        remain--; if(remain===0)renderPhotos();
+      };
+      img.src=reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+  input.value='';
+}
+function removePhoto(i){
+  editingPhotos.splice(i,1);
+  renderPhotos();
+}
+function renderPhotos(){
+  document.querySelector('#photos').innerHTML=editingPhotos.map((p,i)=>`
+    <div>
+      <img class="photo-preview" src="${p}">
+      <div><button class="light" onclick="removePhoto(${i})">删除</button></div>
+    </div>`).join('');
+}
+function saveDay(){
+  ensureDraft();
+  const work=document.querySelector('#workContent').value.trim();
+  const people=window.draft.people
+    .map(p=>({id:p.id,name:(p.name||'').trim()}))
+    .filter(p=>p.name);
+  allData[selectedDate]={work,people,photos:[...editingPhotos],savedAt:new Date().toISOString()};
+  localStorage.setItem(KL,JSON.stringify(people.map(p=>p.name)));
+  persist();
+  window.draft=JSON.parse(JSON.stringify(allData[selectedDate]));
+  document.querySelector('#saveStatus').textContent='已保存到 '+selectedDate;
+  renderAll();
+}
+function clearForm(){
+  if(!confirm('清空当前编辑内容吗？已保存的记录不会删除。'))return;
+  window.draft={work:'',people:[],photos:[]};
+  editingPhotos=[];
+  document.querySelector('#workContent').value='';
+  renderPeople();renderPhotos();
+}
+function personStats(){
+  const map={};
+  Object.entries(allData).forEach(([date,d])=>{
+    const seen=new Set();
+    (d.people||[]).forEach(p=>{
+      const name=(p.name||'').trim(); if(!name)return;
+      if(!map[name])map[name]={days:0,dates:[]};
+      if(!seen.has(name)){map[name].days++;map[name].dates.push(date);seen.add(name);}
+    });
+  });
+  return map;
+}
+function renderPersonSummary(){
+  const box=document.querySelector('#personSummary');
+  const stats=personStats();
+  const names=Object.keys(stats).sort((a,b)=>a.localeCompare(b,'zh-CN'));
+  if(!names.length){box.innerHTML='<div class="hint">暂无出勤记录。</div>';return;}
+  box.innerHTML=names.map(n=>`
+    <div class="summary-person">
+      <div><strong>${esc(n)}</strong></div>
+      <div><strong>${stats[n].days} 天</strong></div>
+    </div>`).join('');
+}
+function renderCalendar(){
+  const y=viewDate.getFullYear(),m=viewDate.getMonth();
+  document.querySelector('#monthTitle').textContent=`${y}年${m+1}月`;
+  const first=new Date(y,m,1),last=new Date(y,m+1,0),arr=[];
+  for(let i=0;i<first.getDay();i++)arr.push('<button class="day blank"></button>');
+  for(let d=1;d<=last.getDate();d++){
+    const k=keyOf(new Date(y,m,d)),has=!!allData[k],today=k===todayKey;
+    arr.push(`<button class="day ${has?'has':''} ${today?'today':''}" onclick="selectFromCalendar('${k}')">${d}${has?'<span class="dot"></span>':''}</button>`);
+  }
+  document.querySelector('#calendar').innerHTML=arr.join('');
+}
+function changeMonth(n){
+  viewDate=new Date(viewDate.getFullYear(),viewDate.getMonth()+n,1);
+  renderCalendar();
+}
+function selectFromCalendar(k){
+  selectedDate=k;
+  document.querySelector('#recordDate').value=k;
+  loadDay(k);
+}
+function renderDayDetail(k){
+  const box=document.querySelector('#dayDetail');
+  const d=allData[k];
+  if(!d){box.innerHTML=`<h3>${k}</h3><div class="hint">当天没有保存记录。</div>`;return;}
+  box.innerHTML=`<h3>${k}</h3>
+    <div><strong>工作内容：</strong></div>
+    <div class="work-detail">${esc(d.work||'未填写')}</div>
+    <div style="margin-top:8px"><strong>出勤人员：</strong></div>
+    ${(d.people||[]).length?`<ul>${d.people.map(p=>`<li>${esc(p.name)}</li>`).join('')}</ul>`:'<div class="hint">无人员记录</div>'}
+    <div class="photo-wrap">${(d.photos||[]).map(p=>`<img class="photo-preview" src="${p}">`).join('')}</div>`;
+}
+function renderAll(){
+  renderPersonSummary();
+  renderCalendar();
+  renderDayDetail(selectedDate);
+}
+
+function exportBackup(){
+  const backup={
+    app:'work_diary_attendance',
+    version:1,
+    exportedAt:new Date().toISOString(),
+    allData
+  };
+  const blob=new Blob([JSON.stringify(backup,null,2)],{type:'application/json'});
+  saveAs(blob,`工作日记备份_${todayKey}.json`);
+}
+
+function importBackup(input){
+  const file=input.files && input.files[0];
+  if(!file)return;
+
+  const reader=new FileReader();
+  reader.onload=()=>{
+    try{
+      const backup=JSON.parse(reader.result);
+      const data=backup && backup.allData ? backup.allData : backup;
+
+      if(!data || typeof data!=='object' || Array.isArray(data)){
+        throw new Error('格式不正确');
+      }
+
+      const count=Object.keys(data).length;
+      if(!confirm(`将导入 ${count} 天的记录。当前本机已有记录会被备份内容覆盖，确定继续吗？`)){
+        input.value='';
+        return;
+      }
+
+      allData=data;
+      persist();
+
+      selectedDate=todayKey;
+      document.querySelector('#recordDate').value=selectedDate;
+      viewDate=new Date();
+      loadDay(selectedDate);
+      renderAll();
+
+      alert('备份恢复成功');
+    }catch(e){
+      alert('导入失败：不是有效的工作日记备份文件');
+    }finally{
+      input.value='';
+    }
+  };
+  reader.readAsText(file);
+}
+
+async function exportExcel(){
+  if(typeof ExcelJS==='undefined'){alert('Excel组件未加载');return;}
+  const wb=new ExcelJS.Workbook();
+  const ws=wb.addWorksheet('每日记录');
+  ws.columns=[
+    {header:'日期',key:'date',width:14},
+    {header:'工作内容',key:'work',width:36},
+    {header:'姓名',key:'name',width:16},
+    {header:'当天出勤人数',key:'count',width:16},
+    {header:'图片数量',key:'photos',width:12}
+  ];
+  ws.getRow(1).font={bold:true};
+  Object.keys(allData).sort().forEach(date=>{
+    const d=allData[date],people=d.people||[];
+    if(!people.length){
+      ws.addRow({date,work:d.work||'',name:'',count:0,photos:(d.photos||[]).length});
+    }else{
+      people.forEach((p,i)=>ws.addRow({
+        date,work:i===0?(d.work||''):'',name:p.name||'',
+        count:i===0?people.length:'',photos:i===0?(d.photos||[]).length:''
+      }));
+    }
+  });
+  const sum=wb.addWorksheet('人员累计汇总');
+  sum.columns=[
+    {header:'姓名',key:'name',width:18},
+    {header:'累计出勤天数',key:'days',width:16},
+    {header:'出勤日期',key:'dates',width:50}
+  ];
+  sum.getRow(1).font={bold:true};
+  const stats=personStats();
+  Object.keys(stats).sort((a,b)=>a.localeCompare(b,'zh-CN')).forEach(name=>{
+    sum.addRow({name,days:stats[name].days,dates:stats[name].dates.join('、')});
+  });
+  const buf=await wb.xlsx.writeBuffer();
+  saveAs(new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}),'工作日记_出勤统计.xlsx');
+}
+init();
+</script>
+</body>
+</html>
