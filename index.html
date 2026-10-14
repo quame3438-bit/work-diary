@@ -511,6 +511,12 @@ init();
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.57.4/dist/umd/supabase.min.js"></script>
 <script>
 const DIARY_TABLE='work_diary_cloud_v1';
+const DIARY_TIMEOUT_MS=20000;
+async function diaryWithTimeout(promise,stage){
+  let timer;
+  try{return await Promise.race([promise,new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error(stage+'超过20秒未响应，请检查网络或云端服务后重试')),DIARY_TIMEOUT_MS);})]);}
+  finally{clearTimeout(timer);}
+}
 let diaryClient=null, diaryUser=null, diaryBusy=false, diaryTimer=null, diaryAgain=false;
 const diaryStatus=(s,ok=false)=>{const e=document.querySelector('#diaryStatus');e.textContent=s;e.className=ok?'ok':'';};
 const diaryClone=x=>JSON.parse(JSON.stringify(x));
@@ -519,7 +525,7 @@ function diarySchedule(){
   clearTimeout(diaryTimer);
   if(diaryBusy){diaryAgain=true;return;}
   diaryStatus('本机已保存，等待上传云端…');
-  diaryTimer=setTimeout(()=>diarySync(),1400);
+  diaryTimer=setTimeout(()=>diarySync(),250);
 }
 function diaryValidate(data){
   if(!data||typeof data!=='object'||Array.isArray(data))throw Error('日记格式不正确');
@@ -560,29 +566,32 @@ async function diarySync(){
     const local=JSON.parse(localStorage.getItem(KD)||'{}');
     diaryValidate(local);
     const snapshot=JSON.stringify(local);
-    diaryStatus('正在核对并同步云端…');
-    const {data:row,error}=await diaryClient.from(DIARY_TABLE).select('payload,revision').eq('user_id',uid).maybeSingle();
+    diaryStatus('正在下载云端记录…（超过20秒会提示）');
+    const {data:row,error}=await diaryWithTimeout(diaryClient.from(DIARY_TABLE).select('payload,revision').eq('user_id',uid).maybeSingle(),'下载云端记录');
     if(error)throw error;
     const remote=row?row.payload.allData:{};
     diaryValidate(remote);
     let base={};try{base=JSON.parse(localStorage.getItem('diaryCloudBase:'+uid)||'{}');}catch{}
-    const lh=await diaryHashes(local),rh=await diaryHashes(remote);
+    diaryStatus('正在核对本机与云端记录…');
+    const lh=await diaryWithTimeout(diaryHashes(local),'核对本机记录'),rh=await diaryWithTimeout(diaryHashes(remote),'核对云端记录');
     const {merged,conflicts}=diaryMerge(local,remote,base,lh,rh);
     if(conflicts.length)throw Error('同一天内容冲突（'+conflicts.join('、')+'）。两边均未覆盖，请先各自导出备份，再核对内容。');
     if(localStorage.getItem(KD)!==null&&localStorage.getItem(KD)!==snapshot){diaryAgain=true;return;}
     if(!diaryUser||diaryUser.id!==uid)return;
-    const hashes=await diaryHashes(merged);
+    const hashes=await diaryWithTimeout(diaryHashes(merged),'核对合并记录');
     const changed=JSON.stringify(hashes)!==JSON.stringify(rh);
     if(changed||!row){
       const revision=crypto.randomUUID();
       const record={user_id:uid,payload:{type:'work-diary',version:1,allData:merged},revision,updated_at:new Date().toISOString()};
       const query=row?diaryClient.from(DIARY_TABLE).update(record).eq('user_id',uid).eq('revision',row.revision):diaryClient.from(DIARY_TABLE).insert(record);
-      const result=await query.select('revision');
+      diaryStatus('正在上传变更到云端…（超过20秒会提示）');
+      const result=await diaryWithTimeout(query.select('revision'),'上传云端记录');
       if(result.error)throw result.error;
       if(!result.data||result.data.length!==1)throw Error('另一台设备刚更新了日记，请再次点击同步。');
     }
     // A save during the request is retained for the next pass.
     if((localStorage.getItem(KD)||'{}')!==snapshot){diaryAgain=true;return;}
+    diaryStatus('正在保存同步结果到本机…');
     localStorage.setItem(KD,JSON.stringify(merged));
     localStorage.setItem('diaryCloudBase:'+uid,JSON.stringify(hashes));
     allData=merged;
