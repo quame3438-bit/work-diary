@@ -57,6 +57,16 @@ button{border:0;border-radius:11px;font-size:14px;font-weight:700;cursor:pointer
 .actions button{flex:1;min-width:140px}
 .search-results{margin-top:10px}.search-item{padding:11px 0;border-bottom:1px solid #eee;cursor:pointer}.search-item:last-child{border-bottom:0}.search-date{font-weight:800;margin-bottom:5px}.search-text{font-size:14px;white-space:pre-wrap;overflow-wrap:anywhere}.search-hit{background:#fff0a8;border-radius:3px;padding:0 1px}
 @media(max-width:560px){.person{grid-template-columns:1fr auto}.person button{height:42px}.grid{grid-template-columns:1fr}}
+
+/* 同日冲突选择 */
+#diaryConflictOverlay{position:fixed;inset:0;background:#0009;z-index:9999;display:flex;align-items:center;justify-content:center;padding:14px}
+#diaryConflictOverlay[hidden]{display:none!important}
+.conflict-dialog{background:#fff;border-radius:16px;padding:18px;width:min(720px,100%);max-height:90dvh;overflow:auto;box-shadow:0 12px 40px #0003}
+.conflict-cols{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:12px 0}
+.conflict-side{background:#f7f7f7;border:1px solid #ddd;border-radius:10px;padding:10px;min-width:0}
+.conflict-side pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:32dvh;overflow:auto;font:14px/1.5 inherit}
+.conflict-actions{display:flex;flex-wrap:wrap;gap:8px}.conflict-actions button{flex:1;min-width:125px}
+@media(max-width:560px){.conflict-cols{grid-template-columns:1fr}.conflict-side pre{max-height:20dvh}}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
@@ -508,6 +518,24 @@ async function exportExcel(){
 }
 init();
 </script>
+
+<div id="diaryConflictOverlay" hidden role="dialog" aria-modal="true" aria-labelledby="conflictTitle">
+ <div class="conflict-dialog">
+  <h3 id="conflictTitle">同一天记录有冲突</h3>
+  <p id="conflictHelp" class="hint">请先对照两份内容，再选择保留哪一份。选择后将用于本机与云端同步。</p>
+  <div class="conflict-cols">
+   <div class="conflict-side"><strong>本机记录</strong><pre id="conflictLocal"></pre></div>
+   <div class="conflict-side"><strong>云端记录</strong><pre id="conflictRemote"></pre></div>
+  </div>
+  <div class="conflict-actions">
+   <button class="light" id="conflictBackup" type="button">下载两份冲突备份</button>
+   <button class="dark" id="conflictChooseLocal" type="button">保留本机</button>
+   <button class="dark" id="conflictChooseRemote" type="button">保留云端</button>
+   <button class="light" id="conflictCancel" type="button">暂不处理</button>
+  </div>
+  <p class="hint">选择“保留本机/云端”会替换另一端当天的记录（含人员和照片）。建议先下载冲突备份。未保存的编辑区不会上传。</p>
+ </div>
+</div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.57.4/dist/umd/supabase.min.js"></script>
 <script>
 const DIARY_TABLE='work_diary_cloud_v1';
@@ -552,6 +580,25 @@ function diaryMerge(local,remote,base,lh,rh){
   }
   return {merged,conflicts};
 }
+function diaryConflictDecision(date,localRecord,remoteRecord){
+  return new Promise(resolve=>{
+    const overlay=document.getElementById('diaryConflictOverlay');
+    const info=r=>`工作内容：\n${r.work||'（空）'}\n\n出勤人员：${(r.people||[]).map(x=>x.name).join('、')||'（无）'}\n图片：${(r.photos||[]).length} 张\n保存时间：${r.savedAt||'未知'}`;
+    document.getElementById('conflictTitle').textContent='同一天记录冲突：'+date;
+    document.getElementById('conflictLocal').textContent=info(localRecord);
+    document.getElementById('conflictRemote').textContent=info(remoteRecord);
+    overlay.hidden=false;
+    const buttons=['conflictChooseLocal','conflictChooseRemote','conflictCancel','conflictBackup'];
+    const finish=choice=>{overlay.hidden=true;buttons.forEach(id=>document.getElementById(id).onclick=null);resolve(choice);};
+    document.getElementById('conflictChooseLocal').onclick=()=>finish('local');
+    document.getElementById('conflictChooseRemote').onclick=()=>finish('remote');
+    document.getElementById('conflictCancel').onclick=()=>finish('cancel');
+    document.getElementById('conflictBackup').onclick=()=>{
+      const blob=new Blob([JSON.stringify({date,local:localRecord,remote:remoteRecord,exportedAt:new Date().toISOString()},null,2)],{type:'application/json'});
+      const a=document.createElement('a');const url=URL.createObjectURL(blob);a.href=url;a.download='工作日记_冲突双份备份_'+date+'.json';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);
+    };
+  });
+}
 async function diarySync(){
   if(!diaryUser||!diaryClient)return;
   if(diaryBusy){diaryAgain=true;return;}
@@ -575,7 +622,14 @@ async function diarySync(){
     diaryStatus('正在核对本机与云端记录…');
     const lh=await diaryWithTimeout(diaryHashes(local),'核对本机记录'),rh=await diaryWithTimeout(diaryHashes(remote),'核对云端记录');
     const {merged,conflicts}=diaryMerge(local,remote,base,lh,rh);
-    if(conflicts.length)throw Error('同一天内容冲突（'+conflicts.join('、')+'）。两边均未覆盖，请先各自导出备份，再核对内容。');
+    for(const date of conflicts){
+      diaryStatus('等待选择冲突记录：'+date);
+      const choice=await diaryConflictDecision(date,local[date],remote[date]);
+      if(choice==='cancel'){diaryStatus('已暂停同步：'+date+' 的冲突尚未处理，本机和云端均未覆盖。');return;}
+      if(!diaryUser||diaryUser.id!==uid)throw Error('账号已改变，请重新同步');
+      if((localStorage.getItem(KD)||'{}')!==snapshot)throw Error('选择期间本机记录发生变化，请重新同步');
+      merged[date]=diaryClone(choice==='local'?local[date]:remote[date]);
+    }
     if(localStorage.getItem(KD)!==null&&localStorage.getItem(KD)!==snapshot){diaryAgain=true;return;}
     if(!diaryUser||diaryUser.id!==uid)return;
     const hashes=await diaryWithTimeout(diaryHashes(merged),'核对合并记录');
