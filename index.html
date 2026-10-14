@@ -20,7 +20,7 @@ h1{font-size:28px;margin:8px 0 16px}
 .label{font-size:13px;color:#777;margin-bottom:6px}
 input,textarea{width:100%;padding:12px;border:1px solid #ddd;border-radius:11px;font-size:15px;background:#fff}
 textarea{min-height:110px;resize:vertical}
-#workContent{min-height:180px;overflow-y:hidden;resize:none;line-height:1.6}
+#workContent{min-height:180px;overflow-y:hidden;resize:none;line-height:1.6;overflow-anchor:none}
 button{border:0;border-radius:11px;font-size:14px;font-weight:700;cursor:pointer}
 .dark{background:#111;color:#fff;padding:12px 14px}
 .light{background:#ececec;color:#222;padding:10px 12px}
@@ -127,10 +127,7 @@ button{border:0;border-radius:11px;font-size:14px;font-weight:700;cursor:pointer
   <div id="saveStatus" class="saved-note"></div>
 </div>
 
-<div class="card">
-  <div class="title"><span>人员累计汇总</span></div>
-  <div id="personSummary"></div>
-</div>
+
 
 <div class="card">
   <div class="title"><span>日历记录</span></div>
@@ -163,6 +160,11 @@ button{border:0;border-radius:11px;font-size:14px;font-weight:700;cursor:pointer
   <div class="hint">搜索所有已保存日记的工作内容；点击结果可直接跳到当天。</div>
   <div id="diarySearchResults" class="search-results"></div>
 </div>
+<div class="card collapsed">
+  <div class="title"><span>人员累计汇总</span></div>
+  <div id="personSummary"></div>
+</div>
+
 </div>
 
 <script>
@@ -204,11 +206,22 @@ function ensureDraft(){
 function resizeWorkContent(){
   const el=document.getElementById('workContent');
   if(!el)return;
-  el.style.height='auto';
-  el.style.height=Math.max(180,el.scrollHeight+2)+'px';
+  // 只改变实际需要的高度，避免每次输入时先缩小再放大造成页面跳动。
+  const oldHeight=el.getBoundingClientRect().height;
+  const currentScroll=window.scrollY;
+  const previous=el.style.height;
+  el.style.height='0px';
+  const desired=Math.max(180,el.scrollHeight+2);
+  el.style.height=previous;
+  if(Math.abs(desired-oldHeight)>1){
+    el.style.height=desired+'px';
+    // 输入框上方内容的布局不应导致阅读位置改变。
+    if(document.activeElement!==el && Math.abs(window.scrollY-currentScroll)>1)
+      window.scrollTo(0,currentScroll);
+  }
 }
 document.getElementById('workContent').addEventListener('input',resizeWorkContent);
-window.addEventListener('resize',resizeWorkContent);
+// 不监听 window.resize：手机键盘弹出/收起也会触发 resize，容易造成跳动。
 function loadDay(k){
   const d=allData[k];
   if(d){
@@ -403,7 +416,7 @@ function openSearchDate(k){
   selectedDate=k;
   document.querySelector('#recordDate').value=k;
   loadDay(k);
-  document.querySelector('#recordDate').scrollIntoView({behavior:'smooth',block:'center'});
+  // 不强制平滑滚动，避免查看搜索结果时页面突然移动。
 }
 
 function exportBackup(){
@@ -649,7 +662,7 @@ diaryInit();
       card.appendChild(body);
       title.setAttribute('role','button');
       title.setAttribute('tabindex','0');
-      title.setAttribute('aria-expanded','true');
+      title.setAttribute('aria-expanded',String(!card.classList.contains('collapsed')));
       const toggle=()=>{
         const collapsed=card.classList.toggle('collapsed');
         title.setAttribute('aria-expanded',String(!collapsed));
